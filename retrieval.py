@@ -37,6 +37,7 @@ class DocumentRetriever:
 
         print("Document retriever initialized successfully!")
 
+    
     def search(self, question):
 
         if not question or not question.strip():
@@ -62,9 +63,15 @@ class DocumentRetriever:
 
         results = []
 
+        MIN_SIMILARITY_SCORE = 0.35
+
         for score, idx in zip(scores[0], indices[0]):
 
             if idx == -1:
+                continue
+
+            # Ignore weakly relevant document chunks
+            if score < MIN_SIMILARITY_SCORE:
                 continue
 
             document = self.metadata[idx]
@@ -78,6 +85,7 @@ class DocumentRetriever:
             })
 
         return results
+
 
 
 if __name__ == "__main__":
