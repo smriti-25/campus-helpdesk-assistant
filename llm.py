@@ -8,11 +8,171 @@ class QwenLLM:
 
         self.model = model
         self.api_url = "http://localhost:11434/api/chat"
-
-        # Minimum relevance score
         self.min_relevance_score = 0.35
 
         print("Qwen LLM initialized successfully!")
+
+    # -----------------------------------------
+    # STEP 1: CHECK DOCUMENT RELEVANCE
+    # -----------------------------------------
+
+    def check_relevance(self, question, document_text):
+
+        prompt = f"""
+You are a strict document relevance evaluator
+for BU Campus Assist.
+
+STUDENT QUESTION:
+{question}
+
+DOCUMENT CONTENT:
+{document_text}
+
+Classify the document into exactly ONE category.
+
+RELEVANT:
+The text contains sufficient information to answer
+the exact question.
+
+PARTIALLY_RELEVANT:
+The text provides useful supporting information
+but does not directly answer the question.
+
+IRRELEVANT:
+The text does not provide useful information.
+
+STRICT RULES:
+1. Keyword matching alone is insufficient.
+2. A heading alone is insufficient.
+3. Incomplete information cannot be RELEVANT
+   unless it independently answers the question.
+4. Do not assume missing information.
+5. Do not use outside knowledge.
+
+Return ONLY one:
+RELEVANT
+PARTIALLY_RELEVANT
+IRRELEVANT
+"""
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
+            "stream": False,
+            "options": {"temperature": 0}
+        }
+
+        try:
+
+            response = requests.post(
+                self.api_url,
+                json=payload,
+                timeout=180
+            )
+
+            response.raise_for_status()
+
+            decision = (
+                response.json()["message"]["content"]
+                .strip()
+                .upper()
+            )
+
+            if "PARTIALLY_RELEVANT" in decision:
+                return "PARTIALLY_RELEVANT"
+
+            if decision == "RELEVANT":
+                return "RELEVANT"
+
+            return "IRRELEVANT"
+
+        except requests.exceptions.RequestException as error:
+
+            print("Relevance checking error:", error)
+            return "IRRELEVANT"
+
+        except (KeyError, ValueError) as error:
+
+            print("Invalid relevance response:", error)
+            return "IRRELEVANT"
+
+    # -----------------------------------------
+    # STEP 2: REMOVE EXACT DUPLICATE CHUNKS
+    # -----------------------------------------
+
+    def remove_duplicate_documents(self, documents):
+
+        unique_documents = {}
+
+        for doc in documents:
+
+            key = (
+                doc["source_document"],
+                doc["page_number"],
+                doc["text"].strip()
+            )
+
+            if key not in unique_documents:
+                unique_documents[key] = doc
+
+            elif doc.get("score", 0) > unique_documents[key].get("score", 0):
+                unique_documents[key] = doc
+
+        return list(unique_documents.values())
+
+    # -----------------------------------------
+    # STEP 3: FILTER RELEVANT DOCUMENTS
+    # -----------------------------------------
+
+    def filter_relevant_documents(self, question, retrieved_docs):
+
+        relevant_docs = []
+
+        for doc in retrieved_docs:
+
+            if doc.get("score", 0) < self.min_relevance_score:
+                continue
+
+            print(
+                "Checking:",
+                doc["source_document"],
+                "| Page:",
+                doc["page_number"]
+            )
+
+            classification = self.check_relevance(
+                question,
+                doc["text"]
+            )
+
+            print("Classification:", classification)
+
+            if classification in [
+                "RELEVANT",
+                "PARTIALLY_RELEVANT"
+            ]:
+
+                selected_doc = doc.copy()
+                selected_doc["relevance"] = classification
+
+                relevant_docs.append(selected_doc)
+
+        unique_docs = self.remove_duplicate_documents(
+            relevant_docs
+        )
+
+        print(
+            "\nDocuments after duplicate removal:",
+            len(unique_docs)
+        )
+
+        return unique_docs
+
+    # -----------------------------------------
+    # STEP 4: GENERATE GROUNDED ANSWER
+    # -----------------------------------------
 
     def generate_answer(self, question, retrieved_docs):
 
@@ -20,36 +180,84 @@ class QwenLLM:
             return "Please enter a question."
 
         if not retrieved_docs:
+
             return (
                 "I could not find relevant information in the "
                 "available university documents. Please contact "
                 "the university administration for confirmation."
             )
 
-        # Filter documents using relevance threshold
-        relevant_docs = [
-            doc for doc in retrieved_docs
-            if doc.get("score", 0) >= self.min_relevance_score
+        print("\nChecking document relevance...\n")
+
+        selected_docs = self.filter_relevant_documents(
+            question,
+            retrieved_docs
+        )
+
+        direct_docs = [
+            doc for doc in selected_docs
+            if doc["relevance"] == "RELEVANT"
         ]
 
-        if not relevant_docs:
+        supporting_docs = [
+            doc for doc in selected_docs
+            if doc["relevance"] == "PARTIALLY_RELEVANT"
+        ]
+        if not direct_docs:
+
             return (
                 "I could not find sufficiently relevant information "
-                "in the available university documents. "
-                "Please contact the university administration "
-                "for confirmation."
+                "to answer this question in the available university "
+                "documents. Please contact the university "
+                "administration for confirmation."
             )
 
-        # Prepare context from retrieved documents
+        # Strict refusal for scholarship-related questions
+
+        question_lower = question.lower()
+
+        if "scholarship" in question_lower or "renewal" in question_lower:
+
+            scholarship_evidence = any(
+                "scholarship" in doc["text"].lower()
+                and "renew" in doc["text"].lower()
+                for doc in direct_docs
+            )
+
+            if not scholarship_evidence:
+
+                return (
+                    "I could not find the university scholarship "
+                    "renewal policy or its minimum CGPA requirement "
+                    "in the available documents. Please contact "
+                    "the university scholarship office for "
+                    "official confirmation."
+                )
+
+        # Prepare document context
+
         context = ""
 
-        for i, doc in enumerate(relevant_docs, start=1):
+        for i, doc in enumerate(direct_docs, start=1):
 
             context += f"""
-SOURCE {i}
+DIRECT DOCUMENT {i}
+
 Document: {doc['source_document']}
 Page: {doc['page_number']}
-Similarity Score: {doc['score']:.4f}
+
+Content:
+{doc['text']}
+
+"""
+
+        for i, doc in enumerate(supporting_docs, start=1):
+
+            context += f"""
+SUPPORTING DOCUMENT {i}
+
+Document: {doc['source_document']}
+Page: {doc['page_number']}
 
 Content:
 {doc['text']}
@@ -57,47 +265,86 @@ Content:
 """
 
         system_prompt = """
-You are BU Campus Assist, a helpful university helpdesk assistant
-for Bennett University students.
+You are BU Campus Assist, a university helpdesk
+assistant for Bennett University students.
 
-Your task is to answer questions using ONLY the university
-document information provided in the context.
+Your job is to answer questions using ONLY
+the supplied university document context.
 
-STRICT RULES:
+STRICT ANSWERING RULES:
 
-1. Never invent university policies, rules, dates, fees,
-   attendance requirements, or other information.
+1. Never invent university policies, dates, fees,
+   deadlines, or requirements.
 
-2. If the answer is not available in the provided context,
-   clearly state that the information could not be verified
-   from the available university documents.
+2. Answer the exact event or information requested.
 
-3. Always mention the source document name and page number
-   when providing factual information.
+3. Do not confuse different calendar events.
 
-4. CONFLICT HANDLING:
-   If different documents provide contradictory rules,
-   explicitly identify both statements and cite both sources.
-   Do not choose one as the current policy unless the supplied
-   documents establish which one is authoritative and current.
+For academic calendars, distinguish carefully between:
+- Teaching days
+- End-semester examination dates
+- Practical examination dates
+- End-semester submission dates
+- Semester completion dates
+- Answer-sheet evaluation deadlines
+- Vacation dates
+- Registration deadlines
 
-5. Do not assume that a newer-looking document automatically
-   overrides another document.
+4. An examination end date does not automatically
+   mean the semester completion date.
 
-6. Do not treat similarity scores as proof of correctness.
+5. An answer-sheet evaluation deadline does not
+   mean the examination end date.
 
-7. Use simple English and short, student-friendly answers.
+6. A submission date does not automatically mean
+   the last date of examinations.
 
-8. Never use general knowledge to fill gaps in university
-   policies.
+7. If the question asks about the odd semester,
+   do not use even-semester dates as the answer.
+   Apply the same rule in reverse.
 
-9. If the retrieved documents are unrelated to the question,
-   refuse to provide an unsupported answer.
+8. If the question asks for a specific date,
+   use only document text that directly supports it.
 
-10. Do not invent source names, page numbers, or quotations.
+9. Never complete missing or truncated dates by guessing.
 
-11. Clearly distinguish verified information from information
-    that requires confirmation from the university.
+10. Supporting documents provide context only.
+    Do not treat them as proof of an answer.
+
+11. If the supplied documents contain conflicting
+    information about the SAME event, explain
+    the conflict and recommend official confirmation.
+
+12. If the exact requested information is absent,
+    clearly say that it could not be confirmed.
+
+13. Use simple English and concise answers.
+
+14. Do not invent document names, page numbers,
+    dates, or quotations.
+
+15. Never use outside knowledge.
+
+16. Answer only the exact question asked by the student.
+
+17. Do not include related information merely because
+    it contains similar keywords.
+
+18. Academic progression requirements, promotion criteria,
+    and scholarship renewal requirements are different.
+    Never treat them as interchangeable.
+
+19. If scholarship renewal information is unavailable,
+    do not provide general CGPA or academic progression
+    requirements as a substitute.
+
+20. If the requested information is unavailable,
+    give a clear refusal and recommend contacting
+    the relevant university department.
+
+IMPORTANT:
+Different events occurring on different dates
+are not necessarily conflicting policies.
 
 Answer only from the supplied context.
 """
@@ -106,11 +353,20 @@ Answer only from the supplied context.
 STUDENT QUESTION:
 {question}
 
-RETRIEVED UNIVERSITY DOCUMENTS:
+UNIVERSITY DOCUMENT CONTEXT:
 {context}
 
-Answer the question using the supplied context
-and follow every system instruction.
+INSTRUCTIONS:
+
+1. Identify the exact information requested.
+2. Find the document statements that directly support it.
+3. Ignore unrelated events and dates.
+4. Do not infer missing information.
+5. If the evidence is incomplete, say so.
+6. Give the answer with document name and page number.
+7. Do not refer to numbered document labels in your answer.
+
+Write a clear student-friendly answer.
 """
 
         payload = {
@@ -127,7 +383,7 @@ and follow every system instruction.
             ],
             "stream": False,
             "options": {
-                "temperature": 0.1
+                "temperature": 0
             }
         }
 
@@ -141,14 +397,13 @@ and follow every system instruction.
 
             response.raise_for_status()
 
-            result = response.json()
+            answer = response.json()["message"]["content"]
 
-            answer = result["message"]["content"]
+            # Add references from direct sources only
 
-            # Automatically collect unique source references
             references = []
 
-            for doc in relevant_docs:
+            for doc in direct_docs:
 
                 reference = (
                     f"- {doc['source_document']}, "
@@ -158,7 +413,6 @@ and follow every system instruction.
                 if reference not in references:
                     references.append(reference)
 
-            # Append references automatically
             answer += "\n\nReferences:\n"
             answer += "\n".join(references)
 
@@ -182,6 +436,14 @@ and follow every system instruction.
 
             return f"Error communicating with Ollama: {error}"
 
+        except (KeyError, ValueError):
+
+            return "The model returned an invalid response."
+
+
+# -----------------------------------------
+# MAIN PROGRAM
+# -----------------------------------------
 
 if __name__ == "__main__":
 
@@ -199,7 +461,10 @@ if __name__ == "__main__":
 
     retrieved_docs = retriever.search(question)
 
-    print("Retrieved document chunks:", len(retrieved_docs))
+    print(
+        "\nRetrieved document chunks:",
+        len(retrieved_docs)
+    )
 
     print("\nGenerating answer using Qwen...\n")
 
@@ -215,3 +480,4 @@ if __name__ == "__main__":
     print(answer)
 
     print("=" * 60)
+

@@ -92,8 +92,8 @@ if __name__ == "__main__":
 
     retriever = DocumentRetriever(top_k=5)
 
-    question = "What is the attendance requirement?"
-
+    # question = "What is the attendance requirement?"
+    question = "What is the minimum attendance requirement for students?"
     print("\nStudent Question:", question)
     print("\nRetrieved Documents:\n")
 
