@@ -1,5 +1,4 @@
 
-
 import requests
 
 
@@ -432,22 +431,33 @@ Write a clear student-friendly answer.
 
             answer = response.json()["message"]["content"]
 
-            # Add references from direct sources only
+            # -----------------------------------------
+            # IMPROVED CITATION FILTERING
+            # -----------------------------------------
 
             references = []
 
             for doc in direct_docs:
 
-                reference = (
-                    f"- {doc['source_document']}, "
-                    f"Page {doc['page_number']}"
-                )
+                source_name = doc["source_document"]
+                page_number = doc["page_number"]
 
-                if reference not in references:
-                    references.append(reference)
+                # Add a reference only when the source
+                # filename appears in the generated answer.
 
-            answer += "\n\nReferences:\n"
-            answer += "\n".join(references)
+                if source_name.lower() in answer.lower():
+
+                    reference = (
+                        f"- {source_name}, Page {page_number}"
+                    )
+
+                    if reference not in references:
+                        references.append(reference)
+
+            if references:
+
+                answer += "\n\nReferences:\n"
+                answer += "\n".join(references)
 
             return answer
 
@@ -513,3 +523,4 @@ if __name__ == "__main__":
     print(answer)
 
     print("=" * 60)
+
