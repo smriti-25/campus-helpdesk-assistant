@@ -1,4 +1,5 @@
 
+
 import requests
 
 
@@ -203,6 +204,7 @@ IRRELEVANT
             doc for doc in selected_docs
             if doc["relevance"] == "PARTIALLY_RELEVANT"
         ]
+
         if not direct_docs:
 
             return (
@@ -212,7 +214,9 @@ IRRELEVANT
                 "administration for confirmation."
             )
 
-        # Strict refusal for scholarship-related questions
+        # -----------------------------------------
+        # STRICT REFUSAL FOR SCHOLARSHIP QUESTIONS
+        # -----------------------------------------
 
         question_lower = question.lower()
 
@@ -234,7 +238,9 @@ IRRELEVANT
                     "official confirmation."
                 )
 
-        # Prepare document context
+        # -----------------------------------------
+        # PREPARE DOCUMENT CONTEXT
+        # -----------------------------------------
 
         context = ""
 
@@ -263,6 +269,10 @@ Content:
 {doc['text']}
 
 """
+
+        # -----------------------------------------
+        # SYSTEM PROMPT
+        # -----------------------------------------
 
         system_prompt = """
 You are BU Campus Assist, a university helpdesk
@@ -311,34 +321,54 @@ For academic calendars, distinguish carefully between:
 10. Supporting documents provide context only.
     Do not treat them as proof of an answer.
 
-11. If the supplied documents contain conflicting
-    information about the SAME event, explain
-    the conflict and recommend official confirmation.
+11. When documents contain different numerical
+    requirements, compare their context before answering.
 
-12. If the exact requested information is absent,
+12. Identify what each requirement applies to:
+    - Examination eligibility
+    - Course attendance and grading
+    - Academic progression
+    - Other university requirements
+
+13. Do not assume that two different percentages
+    describe the same requirement.
+
+14. Consider the document date and effective date
+    when comparing policies. However, do not assume
+    that a later document automatically cancels an
+    earlier document unless the text establishes this.
+
+15. If two documents describe different requirements,
+    explain each requirement separately.
+
+16. If the documents appear to conflict and do not
+    explain how the requirements relate, disclose
+    the discrepancy and recommend official confirmation.
+
+17. If the exact requested information is absent,
     clearly say that it could not be confirmed.
 
-13. Use simple English and concise answers.
+18. Use simple English and concise answers.
 
-14. Do not invent document names, page numbers,
+19. Do not invent document names, page numbers,
     dates, or quotations.
 
-15. Never use outside knowledge.
+20. Never use outside knowledge.
 
-16. Answer only the exact question asked by the student.
+21. Answer only the exact question asked by the student.
 
-17. Do not include related information merely because
+22. Do not include related information merely because
     it contains similar keywords.
 
-18. Academic progression requirements, promotion criteria,
+23. Academic progression requirements, promotion criteria,
     and scholarship renewal requirements are different.
     Never treat them as interchangeable.
 
-19. If scholarship renewal information is unavailable,
+24. If scholarship renewal information is unavailable,
     do not provide general CGPA or academic progression
     requirements as a substitute.
 
-20. If the requested information is unavailable,
+25. If the requested information is unavailable,
     give a clear refusal and recommend contacting
     the relevant university department.
 
@@ -361,10 +391,13 @@ INSTRUCTIONS:
 1. Identify the exact information requested.
 2. Find the document statements that directly support it.
 3. Ignore unrelated events and dates.
-4. Do not infer missing information.
-5. If the evidence is incomplete, say so.
-6. Give the answer with document name and page number.
-7. Do not refer to numbered document labels in your answer.
+4. Compare numerical requirements using their context.
+5. Do not infer missing information.
+6. If the evidence is incomplete, say so.
+7. If documents contain a genuine unresolved conflict,
+   clearly explain the discrepancy.
+8. Give the answer with document name and page number.
+9. Do not refer to numbered document labels in your answer.
 
 Write a clear student-friendly answer.
 """
@@ -480,4 +513,3 @@ if __name__ == "__main__":
     print(answer)
 
     print("=" * 60)
-
