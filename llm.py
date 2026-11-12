@@ -90,9 +90,11 @@ The document provides useful supporting information
 but does not directly answer the question.
 
 IRRELEVANT:
-The document does not provide useful information.
+The document does not provide useful information
+for the exact question.
 
 STRICT RULES:
+
 1. Keyword matching alone is insufficient.
 2. A heading alone is insufficient.
 3. Do not assume missing information.
@@ -103,11 +105,33 @@ STRICT RULES:
 8. For attendance questions, consider the purpose
    of the requirement, not just its percentage.
 9. A document about course grading may be relevant
-   to course attendance, even if the question also
-   asks about examination eligibility.
+   to course attendance questions.
 10. A document about End Semester Examination
-    eligibility is relevant to questions about
-    minimum attendance for that examination.
+    eligibility is relevant to examination attendance questions.
+
+ACADEMIC REQUIREMENT DISTINCTION:
+
+11. Graduation requirements and year-promotion
+    requirements are different.
+
+12. If a student asks for the minimum CGPA required
+    for graduation, a document that only specifies
+    CGPA requirements for promotion to another year
+    must be classified as IRRELEVANT.
+
+13. If a document mentions CGPA 3.0 or 4.0 for
+    promotion to another year, do not treat that
+    information as a graduation requirement.
+
+14. A document is relevant to graduation CGPA only
+    if it explicitly states a CGPA requirement for
+    completing or graduating from the programme.
+
+15. If the question asks about promotion to the next
+    academic year, promotion-policy documents are relevant.
+
+16. Preserve differences between student admission
+    batches and academic years.
 
 Return ONLY valid JSON in this format:
 
@@ -395,7 +419,7 @@ STRICT RULES:
 1. Never invent university policies, dates, fees,
    deadlines, or requirements.
 
-2. Answer the exact event or information requested.
+2. Answer the exact information requested.
 
 3. Distinguish teaching days, examination dates,
    practical examination dates, submission dates,
@@ -426,10 +450,11 @@ STRICT RULES:
     - Examination eligibility
     - Course attendance and grading
     - Academic progression
+    - Graduation
     - Other university requirements
 
-13. Do not assume that different percentages
-    describe the same requirement.
+13. Do not assume that different percentages or
+    CGPA values describe the same requirement.
 
 14. Consider document dates and effective dates.
     Do not assume a later document automatically
@@ -454,7 +479,8 @@ STRICT RULES:
 22. Do not include unrelated information.
 
 23. Academic progression, promotion criteria,
-    and scholarship renewal are different requirements.
+    graduation requirements, and scholarship renewal
+    are different requirements.
 
 24. If scholarship renewal information is unavailable,
     do not substitute general CGPA requirements.
@@ -503,27 +529,73 @@ ATTENDANCE POLICY RULES:
     explain those differences instead of presenting
     them as a single universal rule.
 
+ACADEMIC PROGRESSION AND GRADUATION RULES:
+
+35. Graduation requirements and year-promotion
+    requirements are different.
+
+36. A CGPA required to progress from first year
+    to second year is not automatically a CGPA
+    required for graduation.
+
+37. A CGPA required to continue a programme is not
+    automatically a CGPA required to complete it.
+
+38. The Examination Manual page 48 contains
+    year-promotion requirements for different
+    admission batches. Do not interpret those
+    requirements as graduation requirements.
+
+39. For students enrolled up to AY 2023-24,
+    the document mentions a CGPA of 3.0 for
+    promotion to the second year.
+
+40. For students admitted from AY 2024-25 onwards,
+    the document mentions a CGPA of 4.0 OR
+    50% of first-year credits for promotion
+    to the second year.
+
+41. These figures apply to academic progression.
+    They must not be used as the minimum CGPA
+    for graduation.
+
+42. If a student asks for the minimum CGPA for
+    graduation, provide a number only if a supplied
+    document explicitly identifies it as a graduation
+    or programme-completion requirement.
+
+43. If the available documents only mention
+    promotion requirements, explain that the
+    graduation CGPA requirement could not be
+    confirmed from the available documents.
+
+44. Do not confuse year promotion, academic
+    progression, programme completion, and graduation.
+
+45. Preserve differences between student admission
+    batches and academic years.
+
 CITATION RULES:
 
-35. Every factual statement must be supported by
+46. Every factual statement must be supported by
     one or more supplied evidence IDs.
 
-36. Return only IDs of documents that actually support
+47. Return only IDs of documents that actually support
     the answer.
 
-37. Do not cite documents merely because they contain
+48. Do not cite documents merely because they contain
     similar keywords.
 
-38. Do not invent evidence IDs.
+49. Do not invent evidence IDs.
 
-39. If a document is only partially relevant, cite it
+50. If a document is only partially relevant, cite it
     only when its content genuinely supports the answer.
 
-40. If no evidence supports the answer, return an
+51. If no evidence supports the answer, return an
     empty evidence_ids list and explain the limitation.
 
-Different events occurring on different dates
-are not necessarily conflicting policies.
+Different events or requirements with different
+purposes are not necessarily conflicting policies.
 """
 
         # -----------------------------------------
@@ -563,7 +635,20 @@ If the question asks about both 70% and 75% attendance:
 - Mention the document and its stated purpose.
 - If any required document is missing from the context,
   clearly disclose that limitation.
-- Do not invent or assume the missing policy details.
+
+SPECIAL INSTRUCTIONS FOR GRADUATION CGPA QUESTIONS:
+
+- Check whether the documents explicitly state
+  a CGPA requirement for graduation.
+- Do not use a CGPA for year promotion as a
+  graduation requirement.
+- Do not use a CGPA for academic progression
+  as a graduation requirement.
+- If only promotion requirements are available,
+  clearly say that the graduation CGPA requirement
+  could not be confirmed from the available documents.
+- Do not guess or provide 3.0 or 4.0 as the
+  graduation CGPA without explicit supporting evidence.
 
 Return ONLY valid JSON in this exact format:
 
@@ -637,8 +722,8 @@ Return ONLY valid JSON in this exact format:
 
                     valid_evidence_ids.append(evidence_id)
 
-
-            # FIX: Detect DB grade even when DB is quoted.
+            # Add Examination Manual page 16 when
+            # the answer mentions a DB grade.
 
             if re.search(
                 r"\bDB\b\s*['\"]?\s+grade",
