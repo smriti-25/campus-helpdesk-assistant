@@ -637,19 +637,6 @@ Return ONLY valid JSON in this exact format:
 
                     valid_evidence_ids.append(evidence_id)
 
-            # TEMPORARY DEBUG OUTPUT
-
-            print(
-                "\nDEBUG EVIDENCE:",
-                [
-                    (
-                        evidence_id,
-                        doc["source_document"],
-                        repr(doc["page_number"])
-                    )
-                    for evidence_id, doc in evidence_lookup.items()
-                ]
-            )
 
             # FIX: Detect DB grade even when DB is quoted.
 
