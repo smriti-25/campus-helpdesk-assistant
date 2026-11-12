@@ -1,6 +1,7 @@
 
 import requests
 import json
+import re
 
 
 class QwenLLM:
@@ -14,7 +15,38 @@ class QwenLLM:
         print("Qwen LLM initialized successfully!")
 
     # -----------------------------------------
-    # STEP 1: BATCH DOCUMENT RELEVANCE CHECKING
+    # STEP 1: FORMAT GENERATED ANSWER
+    # -----------------------------------------
+
+    def format_answer(self, answer):
+
+        # Fix missing spaces between lowercase and uppercase words
+        answer = re.sub(
+            r'([a-z])([A-Z])',
+            r'\1 \2',
+            answer
+        )
+
+        # Add a space before opening brackets
+        answer = re.sub(
+            r'([a-zA-Z0-9])\(',
+            r'\1 (',
+            answer
+        )
+
+        # Fix known missing spaces in generated answers
+        answer = answer.replace(
+            "Authorityhas",
+            "Authority has"
+        )
+
+        # Remove unnecessary multiple spaces
+        answer = re.sub(r' {2,}', ' ', answer)
+
+        return answer
+
+    # -----------------------------------------
+    # STEP 2: BATCH DOCUMENT RELEVANCE CHECKING
     # -----------------------------------------
 
     def check_relevance(self, question, documents):
@@ -144,7 +176,7 @@ Return ONLY valid JSON in this format:
             return ["IRRELEVANT"] * len(documents)
 
     # -----------------------------------------
-    # STEP 2: REMOVE EXACT DUPLICATE CHUNKS
+    # STEP 3: REMOVE EXACT DUPLICATE CHUNKS
     # -----------------------------------------
 
     def remove_duplicate_documents(self, documents):
@@ -168,14 +200,13 @@ Return ONLY valid JSON in this format:
         return list(unique_documents.values())
 
     # -----------------------------------------
-    # STEP 3: FILTER DOCUMENTS USING BATCH RESULTS
+    # STEP 4: FILTER DOCUMENTS USING BATCH RESULTS
     # -----------------------------------------
 
     def filter_relevant_documents(self, question, retrieved_docs):
 
         filtered_docs = []
 
-        # First remove weak similarity results
         for doc in retrieved_docs:
 
             if doc.get("score", 0) >= self.min_relevance_score:
@@ -190,7 +221,6 @@ Return ONLY valid JSON in this format:
             "documents..."
         )
 
-        # One Qwen request for all documents
         classifications = self.check_relevance(
             question,
             filtered_docs
@@ -234,7 +264,7 @@ Return ONLY valid JSON in this format:
         return unique_docs
 
     # -----------------------------------------
-    # STEP 4: GENERATE GROUNDED ANSWER
+    # STEP 5: GENERATE GROUNDED ANSWER
     # -----------------------------------------
 
     def generate_answer(self, question, retrieved_docs):
@@ -277,7 +307,7 @@ Return ONLY valid JSON in this format:
             )
 
         # -----------------------------------------
-        # STRICT REFUSAL FOR SCHOLARSHIP QUESTIONS
+        # SCHOLARSHIP REFUSAL GUARD
         # -----------------------------------------
 
         question_lower = question.lower()
@@ -396,16 +426,16 @@ For academic calendars, distinguish carefully between:
     describe the same requirement.
 
 14. Consider the document date and effective date
-    when comparing policies. However, do not assume
-    that a later document automatically cancels an
-    earlier document unless the text establishes this.
+    when comparing policies. Do not assume that a
+    later document automatically cancels an earlier
+    document unless the text establishes this.
 
 15. If two documents describe different requirements,
     explain each requirement separately.
 
-16. If the documents appear to conflict and do not
-    explain how the requirements relate, disclose
-    the discrepancy and recommend official confirmation.
+16. If documents appear to conflict and do not explain
+    how the requirements relate, disclose the discrepancy
+    and recommend official confirmation.
 
 17. If the exact requested information is absent,
     clearly say that it could not be confirmed.
@@ -493,6 +523,9 @@ Write a clear student-friendly answer.
             response.raise_for_status()
 
             answer = response.json()["message"]["content"].strip()
+
+            # Apply answer formatting
+            answer = self.format_answer(answer)
 
             # -----------------------------------------
             # CITATION FILTERING
@@ -583,5 +616,3 @@ if __name__ == "__main__":
     print(answer)
 
     print("=" * 60)
-
-
