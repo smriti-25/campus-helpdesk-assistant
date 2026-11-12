@@ -20,27 +20,23 @@ class QwenLLM:
 
     def format_answer(self, answer):
 
-        # Fix missing spaces between lowercase and uppercase words
         answer = re.sub(
             r'([a-z])([A-Z])',
             r'\1 \2',
             answer
         )
 
-        # Add a space before opening brackets
         answer = re.sub(
             r'([a-zA-Z0-9])\(',
             r'\1 (',
             answer
         )
 
-        # Fix known missing spaces in generated answers
         answer = answer.replace(
             "Authorityhas",
             "Authority has"
         )
 
-        # Remove unnecessary multiple spaces
         answer = re.sub(r' {2,}', ' ', answer)
 
         return answer
@@ -138,6 +134,7 @@ Return ONLY valid JSON in this format:
 
                 if (
                     isinstance(document_number, int)
+                    and not isinstance(document_number, bool)
                     and 1 <= document_number <= len(documents)
                 ):
                     classifications[document_number] = classification
@@ -331,31 +328,33 @@ Return ONLY valid JSON in this format:
                 )
 
         # -----------------------------------------
-        # PREPARE DOCUMENT CONTEXT
+        # STEP 6: PREPARE DOCUMENT CONTEXT WITH EVIDENCE IDs
         # -----------------------------------------
 
         context = ""
+        evidence_docs = []
 
-        for i, doc in enumerate(direct_docs, start=1):
+        for doc in direct_docs:
+            evidence_docs.append(doc)
+
+        for doc in supporting_docs:
+            evidence_docs.append(doc)
+
+        evidence_lookup = {}
+
+        for i, doc in enumerate(evidence_docs, start=1):
+
+            evidence_id = f"D{i}"
+
+            evidence_lookup[evidence_id] = doc
 
             context += f"""
-DIRECT DOCUMENT {i}
+[EVIDENCE ID: {evidence_id}]
 
 Document: {doc['source_document']}
 Page: {doc['page_number']}
 
-Content:
-{doc['text']}
-
-"""
-
-        for i, doc in enumerate(supporting_docs, start=1):
-
-            context += f"""
-SUPPORTING DOCUMENT {i}
-
-Document: {doc['source_document']}
-Page: {doc['page_number']}
+Relevance: {doc['relevance']}
 
 Content:
 {doc['text']}
@@ -363,34 +362,27 @@ Content:
 """
 
         # -----------------------------------------
-        # SYSTEM PROMPT
+        # STEP 7: SYSTEM PROMPT
         # -----------------------------------------
 
         system_prompt = """
 You are BU Campus Assist, a university helpdesk
 assistant for Bennett University students.
 
-Your job is to answer questions using ONLY
-the supplied university document context.
+Answer questions using ONLY the supplied
+university document context.
 
-STRICT ANSWERING RULES:
+STRICT RULES:
 
 1. Never invent university policies, dates, fees,
    deadlines, or requirements.
 
 2. Answer the exact event or information requested.
 
-3. Do not confuse different calendar events.
-
-For academic calendars, distinguish carefully between:
-- Teaching days
-- End-semester examination dates
-- Practical examination dates
-- End-semester submission dates
-- Semester completion dates
-- Answer-sheet evaluation deadlines
-- Vacation dates
-- Registration deadlines
+3. Distinguish teaching days, examination dates,
+   practical examination dates, submission dates,
+   semester completion dates, evaluation deadlines,
+   vacation dates, and registration deadlines.
 
 4. An examination end date does not automatically
    mean the semester completion date.
@@ -401,75 +393,83 @@ For academic calendars, distinguish carefully between:
 6. A submission date does not automatically mean
    the last date of examinations.
 
-7. If the question asks about the odd semester,
-   do not use even-semester dates as the answer.
-   Apply the same rule in reverse.
+7. Do not mix odd-semester and even-semester dates.
 
-8. If the question asks for a specific date,
-   use only document text that directly supports it.
+8. Use only document text that directly supports
+   the requested information.
 
 9. Never complete missing or truncated dates by guessing.
 
 10. Supporting documents provide context only.
-    Do not treat them as proof of an answer.
 
-11. When documents contain different numerical
-    requirements, compare their context before answering.
+11. Compare numerical requirements using their context.
 
-12. Identify what each requirement applies to:
+12. Identify whether a requirement applies to:
     - Examination eligibility
     - Course attendance and grading
     - Academic progression
     - Other university requirements
 
-13. Do not assume that two different percentages
+13. Do not assume that different percentages
     describe the same requirement.
 
-14. Consider the document date and effective date
-    when comparing policies. Do not assume that a
-    later document automatically cancels an earlier
-    document unless the text establishes this.
+14. Consider document dates and effective dates.
+    Do not assume a later document automatically
+    cancels an earlier document unless the text says so.
 
-15. If two documents describe different requirements,
-    explain each requirement separately.
+15. Explain different requirements separately.
 
-16. If documents appear to conflict and do not explain
-    how the requirements relate, disclose the discrepancy
-    and recommend official confirmation.
+16. Disclose unresolved document discrepancies.
 
-17. If the exact requested information is absent,
+17. If requested information is absent,
     clearly say that it could not be confirmed.
 
 18. Use simple English and concise answers.
 
-19. Do not invent document names, page numbers,
+19. Never invent document names, page numbers,
     dates, or quotations.
 
 20. Never use outside knowledge.
 
-21. Answer only the exact question asked by the student.
+21. Answer only the exact question asked.
 
-22. Do not include related information merely because
-    it contains similar keywords.
+22. Do not include unrelated information.
 
-23. Academic progression requirements, promotion criteria,
-    and scholarship renewal requirements are different.
-    Never treat them as interchangeable.
+23. Academic progression, promotion criteria,
+    and scholarship renewal are different requirements.
 
 24. If scholarship renewal information is unavailable,
-    do not provide general CGPA or academic progression
-    requirements as a substitute.
+    do not substitute general CGPA requirements.
 
-25. If the requested information is unavailable,
-    give a clear refusal and recommend contacting
+25. If information is unavailable, recommend contacting
     the relevant university department.
 
-IMPORTANT:
+CITATION RULES:
+
+26. Every factual statement must be supported by
+    one or more supplied evidence IDs.
+
+27. Return only IDs of documents that actually support
+    the answer.
+
+28. Do not cite documents merely because they contain
+    similar keywords.
+
+29. Do not invent evidence IDs.
+
+30. If a document is only partially relevant, cite it
+    only when its content genuinely supports the answer.
+
+31. If no evidence supports the answer, return an
+    empty evidence_ids list and explain the limitation.
+
 Different events occurring on different dates
 are not necessarily conflicting policies.
-
-Answer only from the supplied context.
 """
+
+        # -----------------------------------------
+        # STEP 8: USER PROMPT
+        # -----------------------------------------
 
         user_prompt = f"""
 STUDENT QUESTION:
@@ -481,17 +481,21 @@ UNIVERSITY DOCUMENT CONTEXT:
 INSTRUCTIONS:
 
 1. Identify the exact information requested.
-2. Find the document statements that directly support it.
-3. Ignore unrelated events and dates.
+2. Find statements that directly support the answer.
+3. Ignore unrelated dates and events.
 4. Compare numerical requirements using their context.
 5. Do not infer missing information.
-6. If the evidence is incomplete, say so.
-7. If documents contain a genuine unresolved conflict,
-   clearly explain the discrepancy.
-8. Give the answer with document name and page number.
-9. Do not refer to numbered document labels in your answer.
+6. Disclose genuine unresolved conflicts.
+7. Use the evidence IDs provided in the context.
+8. Select only evidence IDs that support your answer.
+9. Do not invent evidence IDs.
 
-Write a clear student-friendly answer.
+Return ONLY valid JSON in this exact format:
+
+{{
+    "answer": "Your student-friendly answer here.",
+    "evidence_ids": ["D1"]
+}}
 """
 
         payload = {
@@ -507,6 +511,7 @@ Write a clear student-friendly answer.
                 }
             ],
             "stream": False,
+            "format": "json",
             "options": {
                 "temperature": 0
             }
@@ -522,30 +527,54 @@ Write a clear student-friendly answer.
 
             response.raise_for_status()
 
-            answer = response.json()["message"]["content"].strip()
+            raw_result = response.json()["message"]["content"]
 
-            # Apply answer formatting
-            answer = self.format_answer(answer)
+            parsed_result = json.loads(raw_result)
+
+            answer = parsed_result["answer"]
+
+            evidence_ids = parsed_result.get(
+                "evidence_ids",
+                []
+            )
+
+            if not isinstance(answer, str):
+                raise ValueError("Invalid answer format")
+
+            if not isinstance(evidence_ids, list):
+                raise ValueError("Invalid evidence IDs format")
+
+            answer = self.format_answer(answer.strip())
 
             # -----------------------------------------
-            # CITATION FILTERING
+            # STEP 9: VALIDATE AND GENERATE CITATIONS
             # -----------------------------------------
+
+            valid_evidence_ids = []
+
+            for evidence_id in evidence_ids:
+
+                if (
+                    isinstance(evidence_id, str)
+                    and evidence_id in evidence_lookup
+                    and evidence_id not in valid_evidence_ids
+                ):
+
+                    valid_evidence_ids.append(evidence_id)
 
             references = []
 
-            for doc in direct_docs:
+            for evidence_id in valid_evidence_ids:
 
-                source_name = doc["source_document"]
-                page_number = doc["page_number"]
+                doc = evidence_lookup[evidence_id]
 
-                if source_name.lower() in answer.lower():
+                reference = (
+                    f"- {doc['source_document']}, "
+                    f"Page {doc['page_number']}"
+                )
 
-                    reference = (
-                        f"- {source_name}, Page {page_number}"
-                    )
-
-                    if reference not in references:
-                        references.append(reference)
+                if reference not in references:
+                    references.append(reference)
 
             if references:
 
@@ -572,9 +601,14 @@ Write a clear student-friendly answer.
 
             return f"Error communicating with Ollama: {error}"
 
-        except (KeyError, ValueError):
+        except (KeyError, ValueError, TypeError) as error:
 
-            return "The model returned an invalid response."
+            print("Answer processing error:", error)
+
+            return (
+                "The model returned an invalid response. "
+                "Please try asking your question again."
+            )
 
 
 # -----------------------------------------
