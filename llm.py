@@ -28,11 +28,8 @@ class QwenLLM:
             flags=re.IGNORECASE
         )
 
-        # Add spaces between joined words and numbers.
         answer = re.sub(r"([a-z])([A-Z])", r"\1 \2", answer)
         answer = re.sub(r"([A-Za-z])(\d)", r"\1 \2", answer)
-
-        # Add a space before opening brackets when missing.
         answer = re.sub(r"([a-zA-Z0-9])\(", r"\1 (", answer)
 
         answer = answer.replace("Authorityhas", "Authority has")
@@ -122,7 +119,35 @@ class QwenLLM:
         return asks_about_attendance and asks_about_comparison
 
     # -----------------------------------------
-    # STEP 5: FIND DOCUMENTS BY NAME AND PAGE
+    # STEP 5: IDENTIFY END SEMESTER ATTENDANCE
+    # QUESTIONS
+    # -----------------------------------------
+
+    def is_end_semester_attendance_question(self, question):
+
+        question_lower = question.lower()
+
+        attendance_terms = [
+            "attendance",
+            "attendances"
+        ]
+
+        exam_terms = [
+            "end semester examination",
+            "end semester exam",
+            "end-semester examination",
+            "end-semester exam",
+            "eligible for examination",
+            "eligibility for examination"
+        ]
+
+        return (
+            any(term in question_lower for term in attendance_terms)
+            and any(term in question_lower for term in exam_terms)
+        )
+
+    # -----------------------------------------
+    # STEP 6: FIND DOCUMENTS BY NAME AND PAGE
     # -----------------------------------------
 
     def find_evidence_id(
@@ -150,7 +175,45 @@ class QwenLLM:
         return None
 
     # -----------------------------------------
-    # STEP 6: CREATE GROUNDED ATTENDANCE ANSWER
+    # STEP 7: BUILD END SEMESTER ATTENDANCE ANSWER
+    # -----------------------------------------
+
+    def build_end_semester_attendance_answer(self, evidence_lookup):
+
+        notification_id = self.find_evidence_id(
+            evidence_lookup,
+            "notification-for-minimum-attendance",
+            1
+        )
+
+        manual_id = self.find_evidence_id(
+            evidence_lookup,
+            "examination-manual-2024-25",
+            16
+        )
+
+        # The official notification is essential.
+        if not notification_id:
+            return None, []
+
+        valid_ids = [notification_id]
+
+        answer = (
+            "The minimum attendance required to be eligible "
+            "for the End Semester Examination is 75%, according "
+            "to the Attendance Notification dated 8 September 2022. "
+            "This requirement is effective from AY 2022-23 "
+            "odd semester onwards."
+        )
+
+        if manual_id:
+            valid_ids.append(manual_id)
+
+        return answer, valid_ids
+
+    # -----------------------------------------
+    # STEP 8: CREATE GROUNDED ATTENDANCE COMPARISON
+    # ANSWER
     # -----------------------------------------
 
     def build_attendance_comparison_answer(self, evidence_lookup):
@@ -185,15 +248,15 @@ class QwenLLM:
         answer = (
             "The documents describe separate attendance requirements "
             "for different purposes:\n\n"
-            "1. **70% attendance – SCSET Academic Rules:** "
+            "1. **70% attendance - SCSET Academic Rules:** "
             "The SCSET rules state that students must maintain at least "
             "70% course attendance. Attendance below 70% can result "
             "in an X grade, according to the rules.\n\n"
-            "2. **75% attendance – End Semester Examination eligibility:** "
+            "2. **75% attendance - End Semester Examination eligibility:** "
             "The Attendance Notification dated 8 September 2022 states "
             "that students must have at least 75% attendance to be "
             "eligible to appear in the End Semester Examination. "
-            "It applies from AY 2022–23 odd semester onwards."
+            "It applies from AY 2022-23 odd semester onwards."
         )
 
         if manual_id:
@@ -201,7 +264,7 @@ class QwenLLM:
             valid_ids.append(manual_id)
 
             answer += (
-                "\n\n3. **Examination Manual 2024–25:** "
+                "\n\n3. **Examination Manual 2024-25:** "
                 "The manual also mentions a 75% attendance requirement "
                 "and a DB grade for attendance below 75%."
             )
@@ -215,8 +278,8 @@ class QwenLLM:
         return answer, valid_ids
 
     # -----------------------------------------
-    # STEP 7: GENERATE GROUNDED ANSWER
-    # SINGLE QWEN CALL
+    # STEP 9: GENERATE GROUNDED ANSWER
+    # SINGLE QWEN CALL WHEN NEEDED
     # -----------------------------------------
 
     def generate_answer(self, question, retrieved_docs):
@@ -225,7 +288,6 @@ class QwenLLM:
             return "Please enter a question."
 
         if not retrieved_docs:
-
             return (
                 "I could not find relevant information in the "
                 "available university documents. Please contact "
@@ -237,7 +299,6 @@ class QwenLLM:
         selected_docs = self.prepare_documents(retrieved_docs)
 
         if not selected_docs:
-
             return (
                 "I could not find relevant information in the "
                 "available university documents. Please contact "
@@ -245,7 +306,7 @@ class QwenLLM:
             )
 
         # -----------------------------------------
-        # STEP 8: PREPARE DOCUMENT CONTEXT
+        # STEP 10: PREPARE DOCUMENT CONTEXT
         # -----------------------------------------
 
         context = ""
@@ -270,7 +331,73 @@ Content:
 """
 
         # -----------------------------------------
-        # STEP 9: SYSTEM PROMPT
+        # STEP 11: PRIORITIZE ATTENDANCE COMPARISON
+        # BEFORE STANDALONE END SEMESTER HANDLING
+        # -----------------------------------------
+
+        if self.is_attendance_comparison_question(question):
+
+            attendance_answer, attendance_ids = (
+                self.build_attendance_comparison_answer(
+                    evidence_lookup
+                )
+            )
+
+            if attendance_answer is not None:
+
+                references = []
+
+                for evidence_id in attendance_ids:
+
+                    doc = evidence_lookup[evidence_id]
+
+                    references.append(
+                        f"- {doc['source_document']}, "
+                        f"Page {doc['page_number']}"
+                    )
+
+                attendance_answer += (
+                    "\n\nReferences:\n"
+                    + "\n".join(references)
+                )
+
+                return attendance_answer
+
+        # -----------------------------------------
+        # STEP 12: OFFICIAL END SEMESTER ATTENDANCE
+        # HANDLING FOR NON-COMPARISON QUESTIONS
+        # -----------------------------------------
+
+        if self.is_end_semester_attendance_question(question):
+
+            attendance_answer, attendance_ids = (
+                self.build_end_semester_attendance_answer(
+                    evidence_lookup
+                )
+            )
+
+            if attendance_answer is not None:
+
+                references = []
+
+                for evidence_id in attendance_ids:
+
+                    doc = evidence_lookup[evidence_id]
+
+                    references.append(
+                        f"- {doc['source_document']}, "
+                        f"Page {doc['page_number']}"
+                    )
+
+                attendance_answer += (
+                    "\n\nReferences:\n"
+                    + "\n".join(references)
+                )
+
+                return attendance_answer
+
+        # -----------------------------------------
+        # STEP 13: SYSTEM PROMPT
         # -----------------------------------------
 
         system_prompt = """
@@ -420,7 +547,7 @@ refusal and an empty evidence_ids list.
 """
 
         # -----------------------------------------
-        # STEP 10: USER PROMPT
+        # STEP 14: USER PROMPT
         # -----------------------------------------
 
         user_prompt = f"""
@@ -454,7 +581,7 @@ Return only the required JSON.
 """
 
         # -----------------------------------------
-        # STEP 11: ONE OLLAMA REQUEST
+        # STEP 15: ONE OLLAMA REQUEST
         # -----------------------------------------
 
         payload = {
@@ -519,7 +646,7 @@ Return only the required JSON.
             answer = self.format_answer(answer.strip())
 
             # -----------------------------------------
-            # STEP 12: VALIDATE EVIDENCE IDS
+            # STEP 16: VALIDATE EVIDENCE IDS
             # -----------------------------------------
 
             valid_evidence_ids = []
@@ -535,23 +662,6 @@ Return only the required JSON.
                     valid_evidence_ids.append(evidence_id)
 
             question_lower = question.lower()
-
-            # -----------------------------------------
-            # ATTENDANCE COMPARISON HANDLING
-            # -----------------------------------------
-
-            if self.is_attendance_comparison_question(question):
-
-                attendance_answer, attendance_ids = (
-                    self.build_attendance_comparison_answer(
-                        evidence_lookup
-                    )
-                )
-
-                if attendance_answer is not None:
-
-                    answer = attendance_answer
-                    valid_evidence_ids = attendance_ids
 
             # -----------------------------------------
             # SCHOLARSHIP REFUSAL GUARD
@@ -633,7 +743,7 @@ Return only the required JSON.
                         valid_evidence_ids.append(evidence_id)
 
             # -----------------------------------------
-            # STEP 13: CREATE CITATIONS
+            # STEP 17: CREATE CITATIONS
             # -----------------------------------------
 
             references = []
