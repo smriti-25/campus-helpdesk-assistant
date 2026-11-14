@@ -1,46 +1,31 @@
-"""
-app.py
-------
-BU Campus Assist - Bennett University Campus Helpdesk Assistant
-Streamlit frontend (Member 2).
 
-Run with:  python -m streamlit run app.py
+"""
+BU Campus Assist - Bennett University Campus Helpdesk Assistant
+Streamlit frontend connected to the real AI/RAG backend.
+
+Run with: python -m streamlit run app.py
 """
 
 import streamlit as st
 
-# ---------------------------------------------------------------------------
-# 1. PAGE SETTINGS (must be the first Streamlit command)
-# ---------------------------------------------------------------------------
+# 1. PAGE SETTINGS
 st.set_page_config(
     page_title="BU Campus Assist",
     page_icon="🎓",
     layout="centered",
 )
 
-# ---------------------------------------------------------------------------
-# 2. CONNECT TO THE BACKEND
-#    - If rag_pipeline.py exists, use the REAL backend.
-#    - If it does not exist yet, use the temporary mock backend.
-# ---------------------------------------------------------------------------
-BACKEND_MODE = "real"
-try:
-    from rag_pipeline import ask_question
-except ModuleNotFoundError as err:
-    if err.name == "rag_pipeline":
-        from mock_backend import ask_question
+# 2. CONNECT TO THE REAL AI BACKEND
+from campus_assistant import CampusAssistant
 
-        BACKEND_MODE = "demo"
-    else:
-        st.error(
-            f"The backend needs a library that is not installed: '{err.name}'. "
-            "Please install it and restart the app."
-        )
-        st.stop()
 
-# ---------------------------------------------------------------------------
-# 3. CONSTANTS AND HELPER FUNCTIONS
-# ---------------------------------------------------------------------------
+@st.cache_resource
+def load_assistant():
+    """Initialize the AI assistant once and reuse it."""
+    return CampusAssistant()
+
+
+# 3. CONSTANTS
 ERROR_MESSAGE = (
     "Sorry, something went wrong while finding your answer. "
     "Please try again in a moment."
@@ -54,59 +39,61 @@ SUGGESTED_QUESTIONS = [
 ]
 
 
-def set_pending_question(question_text: str) -> None:
-    """Runs when a suggested-question button is clicked."""
+# 4. HELPER FUNCTIONS
+def set_pending_question(question_text: str):
     st.session_state.pending_question = question_text
 
 
-def clear_chat() -> None:
-    """Runs when the Clear chat button is clicked."""
+def clear_chat():
     st.session_state.messages = []
     st.session_state.pending_question = None
 
 
-def format_source(source) -> str:
-    """Turn one source from the backend into a readable line of text."""
+def format_source(source):
     if isinstance(source, dict):
-        document = source.get("document") or "Unknown document"
+        document = source.get("document", "Unknown document")
         page = source.get("page")
+
         if page in (None, ""):
             return f"{document} (page number not available)"
-        return f"{document}, page {page}"
+
+        return f"{document}, Page {page}"
+
     return str(source)
 
 
-def show_message(message: dict) -> None:
-    """Draw one chat message. Assistant messages also show their sources."""
+def show_message(message: dict):
     with st.chat_message(message["role"]):
+
         if message.get("is_error"):
             st.error(message["content"])
         else:
             st.markdown(message["content"])
 
         sources = message.get("sources") or []
+
         if message["role"] == "assistant" and sources:
             with st.expander("📄 Sources", expanded=True):
                 for source in sources:
                     st.markdown(f"- {format_source(source)}")
 
 
-# ---------------------------------------------------------------------------
-# 4. SESSION STATE (Streamlit's memory between reruns)
-# ---------------------------------------------------------------------------
+# 5. SESSION STATE
 if "messages" not in st.session_state:
     st.session_state.messages = []
+
 if "pending_question" not in st.session_state:
     st.session_state.pending_question = None
 
-# ---------------------------------------------------------------------------
-# 5. SIDEBAR: suggested questions and Clear chat
-# ---------------------------------------------------------------------------
+
+# 6. SIDEBAR
 with st.sidebar:
+
     st.header("🎓 BU Campus Assist")
     st.caption("Bennett University Campus Helpdesk Assistant")
 
     st.subheader("Suggested questions")
+
     for i, question_text in enumerate(SUGGESTED_QUESTIONS):
         st.button(
             question_text,
@@ -117,54 +104,75 @@ with st.sidebar:
         )
 
     st.divider()
-    st.button("🗑️ Clear chat", on_click=clear_chat, width="stretch")
 
-# ---------------------------------------------------------------------------
-# 6. TITLE AND WELCOME MESSAGE
-# ---------------------------------------------------------------------------
+    st.button(
+        "🗑️ Clear chat",
+        on_click=clear_chat,
+        width="stretch",
+    )
+
+
+# 7. TITLE AND WELCOME MESSAGE
 st.title("🎓 BU Campus Assist")
-st.caption("Your Bennett University campus helpdesk, powered by official documents.")
+
+st.caption(
+    "Your Bennett University campus helpdesk, "
+    "powered by official university documents."
+)
 
 with st.chat_message("assistant"):
     st.markdown(
         "Hello! 👋 Welcome to **BU Campus Assist**, the Bennett University "
-        "campus helpdesk assistant. Ask me about attendance, examinations, the "
-        "academic calendar, academic rules and other university policies. "
-        "I answer using official university documents and show the source "
-        "of every answer."
+        "campus helpdesk assistant. Ask me about attendance, examinations, "
+        "the academic calendar, academic rules and other university policies. "
+        "I answer using official university documents and show the sources."
     )
 
-if BACKEND_MODE == "demo":
-    st.warning("Demo mode: answers are temporary placeholders.")
 
-# ---------------------------------------------------------------------------
-# 7. SHOW CONVERSATION HISTORY
-# ---------------------------------------------------------------------------
+# 8. SHOW CHAT HISTORY
 for message in st.session_state.messages:
     show_message(message)
 
-# ---------------------------------------------------------------------------
-# 8. CHAT INPUT AND ANSWER
-# ---------------------------------------------------------------------------
+
+# 9. CHAT INPUT AND REAL BACKEND ANSWER
 typed_question = st.chat_input("Type your question here...")
+
 question = st.session_state.pending_question or typed_question
 st.session_state.pending_question = None
 
 if question:
-    user_message = {"role": "user", "content": question}
+
+    user_message = {
+        "role": "user",
+        "content": question,
+    }
+
     st.session_state.messages.append(user_message)
     show_message(user_message)
 
     try:
-        with st.spinner("Searching the official documents..."):
-            answer, sources = ask_question(question)
+
+        with st.spinner("Searching official university documents..."):
+
+            # Load the real AI assistant
+            assistant = load_assistant()
+
+            # Ask the question using the RAG backend
+            result = assistant.ask(question)
+
         assistant_message = {
             "role": "assistant",
-            "content": answer,
-            "sources": sources,
+            "content": result.get("answer", ERROR_MESSAGE),
+            "sources": result.get("references", []),
         }
+
+        if not result.get("success", False):
+            assistant_message["is_error"] = True
+
     except Exception as err:
-        print(f"Backend error: {err}")  # technical detail goes to the terminal only
+
+        print(f"Backend error: {err}")
+
         assistant_message = {
             "role": "assistant",
             "content": ERROR_MESSAGE,
