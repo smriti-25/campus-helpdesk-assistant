@@ -22,16 +22,21 @@ class QwenLLM:
     def format_answer(self, answer):
 
         answer = re.sub(
-            r'\s*\(EVIDENCE ID:\s*D\d+\)',
-            '',
+            r"\s*\(?EVIDENCE ID:\s*D\d+\)?",
+            "",
             answer,
             flags=re.IGNORECASE
         )
 
-        answer = re.sub(r'([a-z])([A-Z])', r'\1 \2', answer)
-        answer = re.sub(r'([a-zA-Z0-9])\(', r'\1 (', answer)
+        # Add spaces between joined words and numbers.
+        answer = re.sub(r"([a-z])([A-Z])", r"\1 \2", answer)
+        answer = re.sub(r"([A-Za-z])(\d)", r"\1 \2", answer)
+
+        # Add a space before opening brackets when missing.
+        answer = re.sub(r"([a-zA-Z0-9])\(", r"\1 (", answer)
+
         answer = answer.replace("Authorityhas", "Authority has")
-        answer = re.sub(r' {2,}', ' ', answer)
+        answer = re.sub(r" {2,}", " ", answer)
 
         return answer.strip()
 
@@ -82,7 +87,135 @@ class QwenLLM:
         return unique_docs
 
     # -----------------------------------------
-    # STEP 4: GENERATE GROUNDED ANSWER
+    # STEP 4: IDENTIFY ATTENDANCE COMPARISON
+    # -----------------------------------------
+
+    def is_attendance_comparison_question(self, question):
+
+        question_lower = question.lower()
+
+        attendance_terms = [
+            "attendance",
+            "attendances"
+        ]
+
+        comparison_terms = [
+            "both",
+            "70%",
+            "75%",
+            "difference",
+            "why",
+            "compare",
+            "mentioned"
+        ]
+
+        asks_about_attendance = any(
+            term in question_lower
+            for term in attendance_terms
+        )
+
+        asks_about_comparison = any(
+            term in question_lower
+            for term in comparison_terms
+        )
+
+        return asks_about_attendance and asks_about_comparison
+
+    # -----------------------------------------
+    # STEP 5: FIND DOCUMENTS BY NAME AND PAGE
+    # -----------------------------------------
+
+    def find_evidence_id(
+        self,
+        evidence_lookup,
+        document_keyword,
+        required_page
+    ):
+
+        for evidence_id, doc in evidence_lookup.items():
+
+            source_name = doc["source_document"].lower()
+
+            try:
+                page_number = int(float(doc["page_number"]))
+            except (ValueError, TypeError):
+                continue
+
+            if (
+                document_keyword in source_name
+                and page_number == required_page
+            ):
+                return evidence_id
+
+        return None
+
+    # -----------------------------------------
+    # STEP 6: CREATE GROUNDED ATTENDANCE ANSWER
+    # -----------------------------------------
+
+    def build_attendance_comparison_answer(self, evidence_lookup):
+
+        scset_id = self.find_evidence_id(
+            evidence_lookup,
+            "academic-rules-for-scset_ug",
+            19
+        )
+
+        notification_id = self.find_evidence_id(
+            evidence_lookup,
+            "notification-for-minimum-attendance",
+            1
+        )
+
+        manual_id = self.find_evidence_id(
+            evidence_lookup,
+            "examination-manual-2024-25",
+            16
+        )
+
+        # Both primary documents must be available.
+        if not scset_id or not notification_id:
+            return None, []
+
+        valid_ids = [
+            scset_id,
+            notification_id
+        ]
+
+        answer = (
+            "The documents describe separate attendance requirements "
+            "for different purposes:\n\n"
+            "1. **70% attendance – SCSET Academic Rules:** "
+            "The SCSET rules state that students must maintain at least "
+            "70% course attendance. Attendance below 70% can result "
+            "in an X grade, according to the rules.\n\n"
+            "2. **75% attendance – End Semester Examination eligibility:** "
+            "The Attendance Notification dated 8 September 2022 states "
+            "that students must have at least 75% attendance to be "
+            "eligible to appear in the End Semester Examination. "
+            "It applies from AY 2022–23 odd semester onwards."
+        )
+
+        if manual_id:
+
+            valid_ids.append(manual_id)
+
+            answer += (
+                "\n\n3. **Examination Manual 2024–25:** "
+                "The manual also mentions a 75% attendance requirement "
+                "and a DB grade for attendance below 75%."
+            )
+
+        answer += (
+            "\n\nThese figures should be understood in the context "
+            "of the different documents and purposes. The documents "
+            "do not establish that one requirement cancels the other."
+        )
+
+        return answer, valid_ids
+
+    # -----------------------------------------
+    # STEP 7: GENERATE GROUNDED ANSWER
     # SINGLE QWEN CALL
     # -----------------------------------------
 
@@ -112,7 +245,7 @@ class QwenLLM:
             )
 
         # -----------------------------------------
-        # STEP 5: PREPARE DOCUMENT CONTEXT
+        # STEP 8: PREPARE DOCUMENT CONTEXT
         # -----------------------------------------
 
         context = ""
@@ -137,7 +270,7 @@ Content:
 """
 
         # -----------------------------------------
-        # STEP 6: SYSTEM PROMPT
+        # STEP 9: SYSTEM PROMPT
         # -----------------------------------------
 
         system_prompt = """
@@ -176,100 +309,101 @@ ANSWER RULES:
 17. Disclose genuine unresolved document discrepancies.
 18. Supporting documents provide context only.
 19. Do not include unrelated information.
+20. Keep answers concise and avoid repeating the same fact.
 
 ATTENDANCE POLICY:
 
-20. Treat the 70% and 75% attendance figures as
+21. Treat the 70% and 75% attendance figures as
     separate requirements unless the documents
     explicitly establish otherwise.
 
-21. SCSET Academic Rules mention a 70% minimum
+22. SCSET Academic Rules mention a 70% minimum
     course attendance requirement. Attendance below
     70% results in an X grade according to that document.
 
-22. The Attendance Notification dated 8 September 2022
+23. The Attendance Notification dated 8 September 2022
     states a 75% minimum attendance requirement for
     End Semester Examination eligibility, effective
     from AY 2022-23 odd semester onwards.
 
-23. The Examination Manual 2024-25 mentions a 75%
+24. The Examination Manual 2024-25 mentions a 75%
     course attendance requirement and a DB grade
     for attendance below 75%.
 
-24. When asked why both percentages appear, explain
+25. When asked why both percentages appear, explain
     each requirement separately and cite the relevant
     documents.
 
-25. Do not claim that one rule cancels another unless
+26. Do not claim that one rule cancels another unless
     a supplied document explicitly establishes this.
 
-26. Do not describe the 75% notification only as
+27. Do not describe the 75% notification only as
     a way to avoid a DB grade. Explain its separate
     examination eligibility purpose.
 
-27. If a required attendance document is missing,
+28. If a required attendance document is missing,
     disclose that limitation.
 
 ACADEMIC PROGRESSION AND GRADUATION:
 
-28. Graduation requirements and year-promotion
+29. Graduation requirements and year-promotion
     requirements are different.
 
-29. A CGPA required for year promotion or academic
+30. A CGPA required for year promotion or academic
     progression is not automatically a graduation
     requirement.
 
-30. Examination Manual page 48 contains promotion
+31. Examination Manual page 48 contains promotion
     requirements for different admission batches.
 
-31. For students enrolled up to AY 2023-24,
+32. For students enrolled up to AY 2023-24,
     the document mentions CGPA 3.0 for promotion
     to the second year.
 
-32. For students admitted from AY 2024-25 onwards,
+33. For students admitted from AY 2024-25 onwards,
     the document mentions CGPA 4.0 OR 50% of
     first-year credits for promotion to the second year.
 
-33. These figures must not be presented as graduation
+34. These figures must not be presented as graduation
     CGPA requirements.
 
-34. Provide a graduation CGPA number only when a
+35. Provide a graduation CGPA number only when a
     supplied document explicitly identifies it as
     a graduation or programme-completion requirement.
 
-35. If only promotion requirements are available,
+36. If only promotion requirements are available,
     say that the graduation CGPA requirement could
     not be confirmed from the available documents.
 
-36. Preserve differences between admission batches.
+37. Preserve differences between admission batches.
 
 SCHOLARSHIP:
 
-37. Do not substitute general academic progression
+38. Do not substitute general academic progression
     requirements for scholarship renewal requirements.
 
-38. If scholarship renewal information is not explicitly
+39. If scholarship renewal information is not explicitly
     supported by the documents, say that it could not
     be confirmed and recommend contacting the
     university scholarship office.
 
 CITATIONS:
 
-39. Every factual statement must be supported by
+40. Every factual statement must be supported by
     supplied evidence.
 
-40. Return only evidence IDs that actually support
+41. Return only evidence IDs that actually support
     the answer.
 
-41. Do not cite documents merely because they contain
+42. Do not cite documents merely because they contain
     similar keywords.
 
-42. Never invent evidence IDs, document names or pages.
+43. Never invent evidence IDs, document names or pages.
 
-43. If no evidence supports the answer, return an empty
+44. If no evidence supports the answer, return an empty
     evidence_ids list and explain the limitation.
 
-44. Different events or requirements with different
+45. Different events or requirements with different
     purposes are not necessarily conflicting policies.
 
 OUTPUT FORMAT:
@@ -286,7 +420,7 @@ refusal and an empty evidence_ids list.
 """
 
         # -----------------------------------------
-        # STEP 7: USER PROMPT
+        # STEP 10: USER PROMPT
         # -----------------------------------------
 
         user_prompt = f"""
@@ -307,6 +441,7 @@ INSTRUCTIONS:
    your answer.
 7. If the answer is unsupported, refuse and return
    an empty evidence_ids list.
+8. Keep the answer concise and avoid repeated statements.
 
 For attendance comparisons, check the 70% SCSET rule,
 the 75% Attendance Notification and the 75% Examination
@@ -319,7 +454,7 @@ Return only the required JSON.
 """
 
         # -----------------------------------------
-        # STEP 8: ONE OLLAMA REQUEST
+        # STEP 11: ONE OLLAMA REQUEST
         # -----------------------------------------
 
         payload = {
@@ -384,7 +519,7 @@ Return only the required JSON.
             answer = self.format_answer(answer.strip())
 
             # -----------------------------------------
-            # STEP 9: VALIDATE EVIDENCE IDS
+            # STEP 12: VALIDATE EVIDENCE IDS
             # -----------------------------------------
 
             valid_evidence_ids = []
@@ -400,6 +535,23 @@ Return only the required JSON.
                     valid_evidence_ids.append(evidence_id)
 
             question_lower = question.lower()
+
+            # -----------------------------------------
+            # ATTENDANCE COMPARISON HANDLING
+            # -----------------------------------------
+
+            if self.is_attendance_comparison_question(question):
+
+                attendance_answer, attendance_ids = (
+                    self.build_attendance_comparison_answer(
+                        evidence_lookup
+                    )
+                )
+
+                if attendance_answer is not None:
+
+                    answer = attendance_answer
+                    valid_evidence_ids = attendance_ids
 
             # -----------------------------------------
             # SCHOLARSHIP REFUSAL GUARD
@@ -481,7 +633,7 @@ Return only the required JSON.
                         valid_evidence_ids.append(evidence_id)
 
             # -----------------------------------------
-            # STEP 10: CREATE CITATIONS
+            # STEP 13: CREATE CITATIONS
             # -----------------------------------------
 
             references = []
