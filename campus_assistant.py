@@ -10,9 +10,44 @@ class CampusAssistant:
         print("Initializing BU Campus Assist...")
 
         self.retriever = DocumentRetriever(top_k=5)
-        self.llm = QwenLLM()
+        self.llm = QwenLLM(model="qwen2.5:1.5b")
 
         print("BU Campus Assist is ready!")
+
+    def is_graduation_cgpa_question(self, question):
+        """
+        Detect questions asking for the minimum CGPA
+        required to graduate from Bennett University.
+        """
+
+        question_lower = question.lower()
+
+        graduation_terms = [
+            "graduation",
+            "graduate",
+            "graduating",
+            "degree completion",
+            "complete my degree"
+        ]
+
+        cgpa_terms = [
+            "cgpa",
+            "c.g.p.a",
+            "grade point",
+            "grade points"
+        ]
+
+        asks_about_graduation = any(
+            term in question_lower
+            for term in graduation_terms
+        )
+
+        asks_about_cgpa = any(
+            term in question_lower
+            for term in cgpa_terms
+        )
+
+        return asks_about_graduation and asks_about_cgpa
 
     def ask(self, question):
 
@@ -24,10 +59,28 @@ class CampusAssistant:
                 "references": []
             }
 
-        # Retrieve documents
+        # SAFETY CHECK:
+        # Do not allow the AI to invent a graduation CGPA.
+        if self.is_graduation_cgpa_question(question):
+
+            return {
+                "success": True,
+                "question": question,
+                "answer": (
+                    "The available Bennett University documents do not "
+                    "confirm a minimum CGPA requirement for graduation. "
+                    "The CGPA values mentioned in the available documents "
+                    "relate to academic progression and year promotion, "
+                    "not graduation. Please confirm the graduation "
+                    "requirement with the university's academic office."
+                ),
+                "references": []
+            }
+
+        # Retrieve relevant university documents
         retrieved_docs = self.retriever.search(question)
 
-        # Generate grounded answer
+        # Generate an answer using the LLM
         answer = self.llm.generate_answer(
             question,
             retrieved_docs
