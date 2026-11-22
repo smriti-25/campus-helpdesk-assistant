@@ -1,31 +1,63 @@
-
 """
-BU Campus Assist - Bennett University Campus Helpdesk Assistant
-Streamlit frontend connected to the real AI/RAG backend.
+app.py
+------
+Campus Helpdesk Assistant (BU Campus Assist)
+Bennett University Campus Helpdesk Assistant
+Streamlit frontend (Member 2), connected to the RAG backend (Member 1).
 
-Run with: python -m streamlit run app.py
+Run with:  python -m streamlit run app.py
 """
 
 import streamlit as st
 
-# 1. PAGE SETTINGS
+# ---------------------------------------------------------------------------
+# 1. PAGE SETTINGS (must be the first Streamlit command)
+# ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="BU Campus Assist",
+    page_title="Campus Helpdesk Assistant",
     page_icon="🎓",
     layout="centered",
 )
 
-# 2. CONNECT TO THE REAL AI BACKEND
-from campus_assistant import CampusAssistant
+# ---------------------------------------------------------------------------
+# 2. CONNECT TO THE BACKEND
+#    - Tries the real CampusAssistant (campus_assistant.py).
+#    - If it cannot start (missing files, Ollama not running, etc.),
+#      falls back to the temporary mock backend so the UI still works.
+# ---------------------------------------------------------------------------
+@st.cache_resource(show_spinner="Starting the assistant...")
+def load_backend():
+    """Create the real assistant once. Returns (assistant, error_text)."""
+    try:
+        from campus_assistant import CampusAssistant
+
+        return CampusAssistant(), None
+    except Exception as err:
+        return None, f"{type(err).__name__}: {err}"
 
 
-@st.cache_resource
-def load_assistant():
-    """Initialize the AI assistant once and reuse it."""
-    return CampusAssistant()
+assistant, backend_error = load_backend()
+BACKEND_MODE = "real" if assistant is not None else "demo"
+
+if BACKEND_MODE == "demo":
+    from mock_backend import ask_question as mock_ask_question
 
 
-# 3. CONSTANTS
+def ask_backend(question: str):
+    """
+    Single place where the UI talks to the backend.
+    Always returns (answer, sources).
+    sources = list of {"document": str, "page": int or None}
+    """
+    if BACKEND_MODE == "real":
+        result = assistant.ask(question)
+        return result["answer"], result.get("references", [])
+    return mock_ask_question(question)
+
+
+# ---------------------------------------------------------------------------
+# 3. CONSTANTS AND HELPER FUNCTIONS
+# ---------------------------------------------------------------------------
 ERROR_MESSAGE = (
     "Sorry, something went wrong while finding your answer. "
     "Please try again in a moment."
@@ -39,61 +71,59 @@ SUGGESTED_QUESTIONS = [
 ]
 
 
-# 4. HELPER FUNCTIONS
-def set_pending_question(question_text: str):
+def set_pending_question(question_text: str) -> None:
+    """Runs when a suggested-question button is clicked."""
     st.session_state.pending_question = question_text
 
 
-def clear_chat():
+def clear_chat() -> None:
+    """Runs when the Clear chat button is clicked."""
     st.session_state.messages = []
     st.session_state.pending_question = None
 
 
-def format_source(source):
+def format_source(source) -> str:
+    """Turn one source from the backend into a readable line of text."""
     if isinstance(source, dict):
-        document = source.get("document", "Unknown document")
+        document = source.get("document") or "Unknown document"
         page = source.get("page")
-
         if page in (None, ""):
             return f"{document} (page number not available)"
-
-        return f"{document}, Page {page}"
-
+        return f"{document}, page {page}"
     return str(source)
 
 
-def show_message(message: dict):
+def show_message(message: dict) -> None:
+    """Draw one chat message. Assistant messages also show their sources."""
     with st.chat_message(message["role"]):
-
         if message.get("is_error"):
             st.error(message["content"])
         else:
             st.markdown(message["content"])
 
         sources = message.get("sources") or []
-
         if message["role"] == "assistant" and sources:
             with st.expander("📄 Sources", expanded=True):
                 for source in sources:
                     st.markdown(f"- {format_source(source)}")
 
 
-# 5. SESSION STATE
+# ---------------------------------------------------------------------------
+# 4. SESSION STATE (Streamlit's memory between reruns)
+# ---------------------------------------------------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = []
-
 if "pending_question" not in st.session_state:
     st.session_state.pending_question = None
 
-
-# 6. SIDEBAR
+# ---------------------------------------------------------------------------
+# 5. SIDEBAR: suggested questions and Clear chat
+# ---------------------------------------------------------------------------
 with st.sidebar:
-
-    st.header("🎓 BU Campus Assist")
+    st.header("🎓 Campus Helpdesk Assistant")
     st.caption("Bennett University Campus Helpdesk Assistant")
 
     st.subheader("Suggested questions")
-
     for i, question_text in enumerate(SUGGESTED_QUESTIONS):
         st.button(
             question_text,
@@ -104,75 +134,59 @@ with st.sidebar:
         )
 
     st.divider()
+    st.button("🗑️ Clear chat", on_click=clear_chat, width="stretch")
 
-    st.button(
-        "🗑️ Clear chat",
-        on_click=clear_chat,
-        width="stretch",
-    )
+    st.divider()
+    if BACKEND_MODE == "real":
+        st.success("Connected to the real backend.")
+    else:
+        st.warning("Demo mode: answers are temporary placeholders.")
+        with st.expander("Why demo mode?"):
+            st.code(backend_error or "Unknown reason")
 
-
-# 7. TITLE AND WELCOME MESSAGE
-st.title("🎓 BU Campus Assist")
-
-st.caption(
-    "Your Bennett University campus helpdesk, "
-    "powered by official university documents."
-)
+# ---------------------------------------------------------------------------
+# 6. TITLE AND WELCOME MESSAGE
+# ---------------------------------------------------------------------------
+st.title("🎓 Campus Helpdesk Assistant")
+st.caption("Your Bennett University campus helpdesk, powered by official documents.")
 
 with st.chat_message("assistant"):
     st.markdown(
         "Hello! 👋 Welcome to **BU Campus Assist**, the Bennett University "
-        "campus helpdesk assistant. Ask me about attendance, examinations, "
-        "the academic calendar, academic rules and other university policies. "
-        "I answer using official university documents and show the sources."
+        "campus helpdesk assistant. Ask me about attendance, examinations, the "
+        "academic calendar, academic rules and other university policies. "
+        "I answer using official university documents and show the source "
+        "of every answer."
     )
 
-
-# 8. SHOW CHAT HISTORY
+# ---------------------------------------------------------------------------
+# 7. SHOW CONVERSATION HISTORY
+# ---------------------------------------------------------------------------
 for message in st.session_state.messages:
     show_message(message)
 
-
-# 9. CHAT INPUT AND REAL BACKEND ANSWER
+# ---------------------------------------------------------------------------
+# 8. CHAT INPUT AND ANSWER
+# ---------------------------------------------------------------------------
 typed_question = st.chat_input("Type your question here...")
-
 question = st.session_state.pending_question or typed_question
 st.session_state.pending_question = None
 
 if question:
-
-    user_message = {
-        "role": "user",
-        "content": question,
-    }
-
+    user_message = {"role": "user", "content": question}
     st.session_state.messages.append(user_message)
     show_message(user_message)
 
     try:
-
-        with st.spinner("Searching official university documents..."):
-
-            # Load the real AI assistant
-            assistant = load_assistant()
-
-            # Ask the question using the RAG backend
-            result = assistant.ask(question)
-
+        with st.spinner("Searching the official documents..."):
+            answer, sources = ask_backend(question)
         assistant_message = {
             "role": "assistant",
-            "content": result.get("answer", ERROR_MESSAGE),
-            "sources": result.get("references", []),
+            "content": answer,
+            "sources": sources,
         }
-
-        if not result.get("success", False):
-            assistant_message["is_error"] = True
-
     except Exception as err:
-
-        print(f"Backend error: {err}")
-
+        print(f"Backend error: {err}")  # technical detail goes to the terminal only
         assistant_message = {
             "role": "assistant",
             "content": ERROR_MESSAGE,
