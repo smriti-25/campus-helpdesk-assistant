@@ -1,4 +1,12 @@
-# Run with:  python -m streamlit run app.py
+"""
+app.py
+------
+Campus Helpdesk Assistant (BU Campus Assist)
+Bennett University Campus Helpdesk Assistant
+Streamlit frontend (Member 2), connected to the RAG backend (Member 1).
+
+Run with:  python -m streamlit run app.py
+"""
 
 import streamlit as st
 
@@ -13,23 +21,39 @@ st.set_page_config(
 
 # ---------------------------------------------------------------------------
 # 2. CONNECT TO THE BACKEND
-#    - If rag_pipeline.py exists, use the REAL backend.
-#    - If it does not exist yet, use the temporary mock backend.
+#    - Tries the real CampusAssistant (campus_assistant.py).
+#    - If it cannot start (missing files, Ollama not running, etc.),
+#      falls back to the temporary mock backend so the UI still works.
 # ---------------------------------------------------------------------------
-BACKEND_MODE = "real"
-try:
-    from rag_pipeline import ask_question
-except ModuleNotFoundError as err:
-    if err.name == "rag_pipeline":
-        from mock_backend import ask_question
+@st.cache_resource(show_spinner="Starting the assistant...")
+def load_backend():
+    """Create the real assistant once. Returns (assistant, error_text)."""
+    try:
+        from campus_assistant import CampusAssistant
 
-        BACKEND_MODE = "demo"
-    else:
-        st.error(
-            f"The backend needs a library that is not installed: '{err.name}'. "
-            "Please install it and restart the app."
-        )
-        st.stop()
+        return CampusAssistant(), None
+    except Exception as err:
+        return None, f"{type(err).__name__}: {err}"
+
+
+assistant, backend_error = load_backend()
+BACKEND_MODE = "real" if assistant is not None else "demo"
+
+if BACKEND_MODE == "demo":
+    from mock_backend import ask_question as mock_ask_question
+
+
+def ask_backend(question: str):
+    """
+    Single place where the UI talks to the backend.
+    Always returns (answer, sources).
+    sources = list of {"document": str, "page": int or None}
+    """
+    if BACKEND_MODE == "real":
+        result = assistant.ask(question)
+        return result["answer"], result.get("references", [])
+    return mock_ask_question(question)
+
 
 # ---------------------------------------------------------------------------
 # 3. CONSTANTS AND HELPER FUNCTIONS
@@ -112,6 +136,14 @@ with st.sidebar:
     st.divider()
     st.button("🗑️ Clear chat", on_click=clear_chat, width="stretch")
 
+    st.divider()
+    if BACKEND_MODE == "real":
+        st.success("Connected to the real backend.")
+    else:
+        st.warning("Demo mode: answers are temporary placeholders.")
+        with st.expander("Why demo mode?"):
+            st.code(backend_error or "Unknown reason")
+
 # ---------------------------------------------------------------------------
 # 6. TITLE AND WELCOME MESSAGE
 # ---------------------------------------------------------------------------
@@ -126,9 +158,6 @@ with st.chat_message("assistant"):
         "I answer using official university documents and show the source "
         "of every answer."
     )
-
-if BACKEND_MODE == "demo":
-    st.warning("Demo mode: answers are temporary placeholders.")
 
 # ---------------------------------------------------------------------------
 # 7. SHOW CONVERSATION HISTORY
@@ -150,7 +179,7 @@ if question:
 
     try:
         with st.spinner("Searching the official documents..."):
-            answer, sources = ask_question(question)
+            answer, sources = ask_backend(question)
         assistant_message = {
             "role": "assistant",
             "content": answer,
