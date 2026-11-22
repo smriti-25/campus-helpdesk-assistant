@@ -1,11 +1,4 @@
-"""
-app.py
-------
-BU Campus Assist - Bennett University Campus Helpdesk Assistant
-Streamlit frontend (Member 2).
-
-Run with:  python -m streamlit run app.py
-"""
+# Run with:  python -m streamlit run app.py
 
 import streamlit as st
 
@@ -13,7 +6,7 @@ import streamlit as st
 # 1. PAGE SETTINGS (must be the first Streamlit command)
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="BU Campus Assist",
+    page_title="Campus Helpdesk Assistant",
     page_icon="🎓",
     layout="centered",
 )
@@ -103,7 +96,7 @@ if "pending_question" not in st.session_state:
 # 5. SIDEBAR: suggested questions and Clear chat
 # ---------------------------------------------------------------------------
 with st.sidebar:
-    st.header("🎓 BU Campus Assist")
+    st.header("🎓 Campus Helpdesk Assistant")
     st.caption("Bennett University Campus Helpdesk Assistant")
 
     st.subheader("Suggested questions")
@@ -122,7 +115,7 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # 6. TITLE AND WELCOME MESSAGE
 # ---------------------------------------------------------------------------
-st.title("🎓 BU Campus Assist")
+st.title("🎓 Campus Helpdesk Assistant")
 st.caption("Your Bennett University campus helpdesk, powered by official documents.")
 
 with st.chat_message("assistant"):
